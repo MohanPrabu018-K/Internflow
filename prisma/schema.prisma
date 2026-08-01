@@ -1,0 +1,330 @@
+// ─── InternFlow Prisma Schema (PostgreSQL) ───────────────────────────────
+// Supports: NextAuth v5, @auth/prisma-adapter, RBAC, full recruitment workflow
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// NextAuth v5 Models (required by @auth/prisma-adapter)
+// ══════════════════════════════════════════════════════════════════════
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?                                 // bcrypt hash for credentials auth
+  role          String    @default("RECRUITER")         // ADMIN | RECRUITER | VIEWER
+  departmentId  String?
+  title         String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts           Account[]
+  sessions           Session[]
+  department         Department?          @relation(fields: [departmentId], references: [id])
+  interviews         Interview[]          @relation("InterviewerAssigned")
+  assignedCandidates Candidate[]          @relation("AssignedRecruiter")
+  auditLogs          AuditLog[]
+  recruiterNotes     RecruiterNote[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Business Domain Models
+// ══════════════════════════════════════════════════════════════════════
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users      User[]
+  candidates Candidate[]
+
+  @@map("departments")
+}
+
+model College {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  city      String?
+  state     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  candidates Candidate[]
+
+  @@map("colleges")
+}
+
+model Candidate {
+  id              String   @id @default(cuid())
+  name            String
+  initials        String
+  email           String   @unique
+  phone           String?
+  collegeId       String?
+  departmentId    String?
+  role            String
+  stage           String   @default("New")   // New | Screening | Assessment | Interview | Selected | Offer Sent | Joined
+  rating          Int      @default(0)
+  cgpa            Float?
+  year            String?
+  appliedDate     DateTime @default(now())
+  location        String?
+  githubUrl       String?
+  linkedinUrl     String?
+  portfolioUrl    String?
+  skills          Json     @default("[]")    // string[]
+  color           String   @default("#3B82F6")
+  assignedRecruiterId String?
+  experience      String?
+  projects        Json     @default("[]")    // string[]
+  notes           String?
+  internalNotes   String?
+  archived        Boolean  @default(false)
+  referralCode    String?
+
+  // Resume
+  resumeFileName    String?
+  resumeUploadedAt  DateTime?
+  resumeMimeType    String?
+  resumePreviewUrl  String?
+
+  // AI Data
+  aiParsedResume      Json?   // ParsedResume
+  aiResumeAnalysis    Json?   // ResumeAnalysis
+  aiSkillBadges       Json?   // SkillBadge[]
+  aiChatbotData       Json?   // ChatbotCollectedInfo
+  aiVideoInterview    Json?   // VideoInterviewAnalysis
+  aiCodingResults     Json?   // CodeEvaluation[]
+  aiOnboardingStatus  Json?   // OnboardingTask[]
+  aiTotalScore        Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  college             College?          @relation(fields: [collegeId], references: [id])
+  department          Department?       @relation(fields: [departmentId], references: [id])
+  assignedRecruiter   User?             @relation("AssignedRecruiter", fields: [assignedRecruiterId], references: [id])
+  applications        Application[]
+  assessments         Assessment[]
+  interviews          Interview[]       @relation("CandidateInterviews")
+  offers              Offer[]
+  recruiterNotes      RecruiterNote[]
+  timeline            TimelineEvent[]
+
+  @@map("candidates")
+}
+
+model Application {
+  id          String   @id @default(cuid())
+  candidateId String
+  role        String
+  stage       String   @default("New")
+  appliedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("applications")
+}
+
+model Assessment {
+  id           String   @id @default(cuid())
+  candidateId  String
+  templateName String
+  score        Float?
+  maxScore     Float?
+  status       String   @default("Pending")   // Pending | Submitted | Approved | Rejected
+  questions    Json?                          // AssessmentTemplate
+  answers      Json?                          // candidate responses
+  deadline     DateTime?
+  submittedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("assessments")
+}
+
+model Interview {
+  id            String   @id @default(cuid())
+  candidateId   String
+  interviewerId String
+  scheduledAt   DateTime
+  platform      String   @default("Google Meet")
+  meetingLink   String?
+  status        String   @default("Scheduled") // Scheduled | Completed | Cancelled | No Show
+  feedback      String?
+  score         Float?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  candidate   Candidate @relation("CandidateInterviews", fields: [candidateId], references: [id], onDelete: Cascade)
+  interviewer User      @relation("InterviewerAssigned", fields: [interviewerId], references: [id])
+
+  @@map("interviews")
+}
+
+model Offer {
+  id           String   @id @default(cuid())
+  candidateId  String
+  templateName String
+  role         String?
+  stipend      Float?
+  startDate    DateTime?
+  status       String   @default("Draft")    // Draft | Sent | Accepted | Rejected
+  content      String?                        // generated offer letter HTML/PDF
+  sentAt       DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("offers")
+}
+
+model EmailLog {
+  id           String    @id @default(cuid())
+  to           String
+  subject      String
+  body         String?
+  templateName String?
+  status       String    @default("Pending")  // Pending | Sent | Failed | Opened
+  sentAt       DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("email_logs")
+}
+
+model ReportSnapshot {
+  id        String   @id @default(cuid())
+  label     String
+  payload   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("report_snapshots")
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  resource  String
+  resourceId String?
+  details   Json?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+model RecruiterNote {
+  id          String   @id @default(cuid())
+  candidateId String
+  authorId    String
+  content     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  author    User      @relation(fields: [authorId], references: [id])
+
+  @@map("recruiter_notes")
+}
+
+model TimelineEvent {
+  id          String   @id @default(cuid())
+  candidateId String
+  event       String
+  date        DateTime @default(now())
+  status      String   @default("completed")   // completed | current | pending
+  createdAt   DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("timeline_events")
+}
+
+model FileUpload {
+  id         String   @id @default(cuid())
+  filename   String
+  originalName String
+  mimeType   String
+  size       Int
+  url        String
+  bucket     String?                            // storage bucket / path
+  uploadedBy String?
+  createdAt  DateTime @default(now())
+
+  @@map("file_uploads")
+}

@@ -1,0 +1,9 @@
+// ─── Prisma 7 Configuration ─────────────────────────────────────────────
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  datasource: {
+    url: process.env.DATABASE_URL!,
+  },
+  schema: "./prisma/schema.prisma",
+});
